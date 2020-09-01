@@ -1,8 +1,9 @@
-import { getRepository } from 'typeorm';
+import { getRepository, getCustomRepository } from 'typeorm';
 
 import AppError from '../errors/AppError';
 import Transaction from '../models/Transaction';
 import Category from '../models/Category';
+import TransactionRepository from '../repositories/TransactionsRepository';
 
 interface Request {
   title: string;
@@ -17,42 +18,47 @@ class CreateTransactionService {
     value,
     type,
     category,
-  }: Request): Promise<Transaction | void> {
+  }: Request): Promise<Transaction> {
     const transactionsRepository = getRepository(Transaction);
     const categoriesRepository = getRepository(Category);
 
-    let category_id = '';
+    const { total } = await getCustomRepository(
+      TransactionRepository,
+    ).getBalance();
 
     if (type !== 'income' && type !== 'outcome') {
       throw new AppError('Type is invalid!');
     }
 
-    const checkCategoryExists = await categoriesRepository.findOne({
+    if (type === 'outcome' && value > total) {
+      throw new AppError('Can not outcome transaction without a valid balance');
+    }
+
+    let transactionCategory = await categoriesRepository.findOne({
       where: { title: category },
     });
 
-    if (checkCategoryExists) {
-      category_id = checkCategoryExists.id;
-    } else {
-      const newCategory = categoriesRepository.create({
+    if (!transactionCategory) {
+      transactionCategory = categoriesRepository.create({
         title: category,
       });
 
-      await categoriesRepository.save(newCategory);
-
-      category_id = newCategory.id;
+      await categoriesRepository.save(transactionCategory);
     }
 
     const transaction = transactionsRepository.create({
       title,
       type,
       value,
-      category_id,
+      category_id: transactionCategory.id,
     });
 
     await transactionsRepository.save(transaction);
 
-    return transaction;
+    return {
+      ...transaction,
+      category: transactionCategory,
+    };
   }
 }
 
